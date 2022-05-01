@@ -1,0 +1,281 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+# This cloud template is used to deploy the infrastructure for the landscaping project
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names.
+    Type: String
+    Default: 'landscaping'
+
+  VpcCIDR:
+    Description: Enter the CIDR for the the VPC. Default is 10.0.0.0/16.
+    Type: String
+    Default: 10.0.0.0/16
+
+  PublicSubnet2ACIDR:
+    Description: Enter the CIDR for public subnet 2A
+    Type: String
+    Default: 10.0.1.0/24
+
+  PrivateSubnet2ACIDR:
+    Description: Enter the CIDR for public subnet 2A
+    Type: String
+    Default: 10.0.2.0/24
+
+  PublicSubnet2BCIDR:
+    Description: Enter the CIDR for public subnet 2B
+    Type: String
+    Default: 10.0.3.0/24
+
+  PrivateSubnet2BCIDR:
+    Description: Enter the CIDR for public subnet 2B
+    Type: String
+    Default: 10.0.4.0/24
+
+Resources:
+  #**************** VPC ******************************
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-vpc
+
+  #**************** Internet Gateway ******************
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: VPC
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-igw
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  #**************** NAT Gateways *****************
+
+  # SECTION: Elastic IP for Public Subnet 2A
+  ElasticIPAddress2AEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-eip-sub-2a
+
+  NATGatewayForPublicSubnet2A:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ElasticIPAddress2AEIP.AllocationId
+      SubnetId: !Ref PublicSubnet2A
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-nat-sub-2a
+
+  # SECTION: Elastic IP for Public Subnet 2B
+  ElasticIPAddress2BEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-eip-sub-2b
+
+  NATGatewayForPublicSubnet2B:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ElasticIPAddress2BEIP.AllocationId
+      SubnetId: !Ref PublicSubnet2B
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-nat-sub-2b
+
+  #**************** Subnets ***************************
+  PublicSubnet2A:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet2ACIDR
+      AvailabilityZone: 'us-east-2a'
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-public-sub-2a
+
+  PrivateSubnet2A:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet2ACIDR
+      AvailabilityZone: 'us-east-2a'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-private-sub-2a
+
+  PublicSubnet2B:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet2BCIDR
+      AvailabilityZone: 'us-east-2b'
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-public-sub-2b
+
+  PrivateSubnet2B:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet2BCIDR
+      AvailabilityZone: 'us-east-2b'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-private-sub-2b
+
+  #**************** Public Route Table and Subnet Association *****************
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-public-rt
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet2ARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2A
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2BRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2B
+      RouteTableId: !Ref PublicRouteTable
+
+  #**************** Private Route Table and Subnet Association *****************
+
+  # SECTION: Private Subnet 2A
+  PrivateRouteTable2A:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-private-rt-2a
+
+  PrivateRoute2A:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2A
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGatewayForPublicSubnet2A
+
+  PrivateSubnet2ARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2A
+      RouteTableId: !Ref PrivateRouteTable2A
+
+  # SECTION: Private Subnet 2B
+  PrivateRouteTable2B:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-private-rt-2b
+
+  PrivateRoute2B:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2B
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGatewayForPublicSubnet2B
+
+  PrivateSubnet2BRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2B
+      RouteTableId: !Ref PrivateRouteTable2B
+
+  #**************** Output *****************
+Outputs:
+  VPC:
+    Description: A reference to the created VPC
+    Value: !Ref VPC
+    Export:
+      Name: !Sub ${EnvironmentName}-vpc
+
+  PublicSubnet2ACIDR:
+    Description: Public subnet 2A CIDR
+    Value: !Ref PublicSubnet2ACIDR
+    Export:
+      Name: !Sub ${EnvironmentName}-pub-sub2a-cidr
+
+  PublicSubnet2BCIDR:
+    Description: Public subnet 2B CIDR
+    Value: !Ref PublicSubnet2BCIDR
+    Export:
+      Name: !Sub ${EnvironmentName}-pub-sub2b-cidr
+
+  PublicSubnet2A:
+    Description: Public Subnet 2A
+    Value: !Ref PublicSubnet2A
+    Export:
+      Name: !Sub ${EnvironmentName}-public-sub-2a
+
+  PrivateSubnet2A:
+    Description: Private Subnet
+    Value: !Ref PrivateSubnet2A
+    Export:
+      Name: !Sub ${EnvironmentName}-private-sub-2a
+
+  PublicSubnet2B:
+    Description: Private Subnet 2B
+    Value: !Ref PrivateSubnet2B
+    Export:
+      Name: !Sub ${EnvironmentName}-public-sub-2b
+
+  PrivateSubnet2B:
+    Description: Private Subnet 2B
+    Value: !Ref PrivateSubnet2B
+    Export:
+      Name: !Sub ${EnvironmentName}-private-sub-2b
+
+  PublicRouteTable:
+    Description: Public Routing
+    Value: !Ref PublicRouteTable
+    Export:
+      Name: !Sub ${EnvironmentName}-public-rt
+
+  PrivateRouteTable2A:
+    Description: Private Routing for subnet 2a
+    Value: !Ref PrivateRouteTable2A
+    Export:
+      Name: !Sub ${EnvironmentName}-private-rt-2a
+
+  PrivateRouteTable2B:
+    Description: Private Routing for subnet 2b
+    Value: !Ref PrivateRouteTable2B
+    Export:
+      Name: !Sub ${EnvironmentName}-private-rt-2b

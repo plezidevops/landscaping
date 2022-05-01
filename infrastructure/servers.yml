@@ -1,0 +1,192 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  This template is used to deploy the bastion hosts on the public subnets
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names.
+    Type: String
+    Default: 'landscaping'
+
+  S3CodeBucketName:
+    Description: The name of the S3 bucket containing the zipped application code
+      to be deployed
+    Type: String
+
+  S3CodeArchive:
+    Description: The application code archive (must end with .zip)
+    Type: String
+    AllowedPattern: ^.*\.zip$
+
+Resources:
+  #**************** Security Group *****************
+  LoadBalancerSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow http traffic to our load balancer
+      VpcId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-vpc'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-lb-sg
+
+  WebServerSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow http to our hosts and SSH from local only
+      VpcId:
+        Fn::ImportValue: !Sub ${EnvironmentName}-vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp:
+            Fn::ImportValue: !Sub ${EnvironmentName}-pub-sub2a-cidr
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp:
+            Fn::ImportValue: !Sub ${EnvironmentName}-pub-sub2b-cidr
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-webserver-sg
+
+  #**************** Launch Configuration *****************
+  WebAppLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # Install Apache 2
+          apt-get update -y
+          apt-get install unzip awscli -y
+          apt-get install apache2 -y
+          systemctl start apache2.service
+          cd /var/www/html
+          aws s3 cp s3://${S3CodeBucketName}/${S3CodeArchive} .
+          unzip -o ${S3CodeArchive}
+          # echo "hello world" > index.html
+          systemctl restart apache2.service
+      SecurityGroups:
+        - Ref: WebServerSecGroup
+      InstanceType: t2.micro
+      ImageId: ami-0a91cd140a1fc148a
+      IamInstanceProfile: !Ref RootInstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: '/dev/sdk'
+          Ebs:
+            VolumeSize: 10
+      LaunchConfigurationName: !Join ['', ['', !Ref EnvironmentName, '-launch-config']]
+
+  #**************** Autoscaling Group *****************
+  WebAppGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - Fn::ImportValue: !Sub ${EnvironmentName}-private-sub-2a
+        - Fn::ImportValue: !Sub ${EnvironmentName}-private-sub-2b
+      LaunchConfigurationName: !Ref WebAppLaunchConfig
+      MinSize: '2'
+      MaxSize: '2'
+      TargetGroupARNs: [!Ref WebAppTargetGroup]
+
+  #**************** Target Group(s) *****************
+  WebAppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 8
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 3
+      VpcId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-vpc'
+
+  #**************** LLoad Balancer(s) *****************
+  WebAppLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets:
+        - Fn::ImportValue: !Sub ${EnvironmentName}-public-sub-2a
+        - Fn::ImportValue: !Sub ${EnvironmentName}-public-sub-2b
+      SecurityGroups: [!Ref LoadBalancerSecGroup]
+
+  LBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WebAppTargetGroup
+      LoadBalancerArn: !Ref WebAppLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  ALBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref WebAppTargetGroup
+      Conditions:
+        - Field: path-pattern
+          Values: [/]
+      ListenerArn: !Ref LBListener
+      Priority: 1
+
+  #**************** Create Role, Policy, and profile *****************
+  S3CodeBucketCopyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+
+  RootInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref S3CodeBucketCopyRole
+
+  S3CodeBucketCopyPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: S3CodeBucketCopyPolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+            Resource: '*'
+      Roles:
+        - !Ref S3CodeBucketCopyRole

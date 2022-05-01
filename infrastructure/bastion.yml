@@ -1,0 +1,118 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  This template is used to deploy the bastion hosts on the public subnets
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names.
+    Type: String
+    Default: 'landscaping'
+
+  InstanceType:
+    Description: The instance type to use for the bastion host
+    Type: String
+    Default: t3.micro
+
+  InstanceAMI:
+    Description: AMI of a bastion host instance to use
+    Type: String
+    Default: ami-0a91cd140a1fc148a
+
+  SSHLocation:
+    Description: Alloweb external connection via to baston host
+    Type: String
+    Default: 0.0.0.0/0
+
+  KeyName:
+    Type: String
+    Default: 'lab-key'
+
+Resources:
+  #**************** Security Groups for bastion host *****************
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: To allow ssh traffic to the bastion host
+      VpcId:
+        Fn::ImportValue: !Sub ${EnvironmentName}-vpc
+      SecurityGroupIngress: # Traffic coming in
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          # This is a security risk. But use for testing purposes only
+          CidrIp: !Ref SSHLocation
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-bastion-sg
+
+  #**************** Bostion hosts for Subnet 2 A ******************************
+  BastionHost2A:
+    Type: AWS::EC2::Instance
+    Properties:
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          apt-get update -y
+          apt-get install unzip awscli -y
+      SecurityGroupIds:
+        - !GetAtt BastionSecurityGroup.GroupId
+      KeyName: !Ref KeyName
+      SubnetId:
+        Fn::ImportValue: !Sub ${EnvironmentName}-public-sub-2a
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref InstanceAMI
+      BlockDeviceMappings:
+        - DeviceName: '/dev/sdk'
+          Ebs:
+            VolumeSize: 10
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-bastion-2a
+
+  #**************** Bostion hosts for Subnet 2 B ******************************
+  BastionHost2B:
+    Type: AWS::EC2::Instance
+    Properties:
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          apt-get update -y
+          apt-get install unzip awscli -y
+      SecurityGroupIds:
+        - !GetAtt BastionSecurityGroup.GroupId
+      KeyName: !Ref KeyName
+      SubnetId:
+        Fn::ImportValue: !Sub ${EnvironmentName}-public-sub-2b
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref InstanceAMI
+      BlockDeviceMappings:
+        - DeviceName: '/dev/sdk'
+          Ebs:
+            VolumeSize: 10
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-bastion-2b
+
+  #**************** Bostion hosts IP ******************************
+  # SECTION: Elastic IP for bastion host in Public Subnet 2A
+  ElasticIPAddress2AEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: VPC
+      InstanceId: !Ref BastionHost2A
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-eip-bastion-2a
+
+  # SECTION: Elastic IP for bastion host in Public Subnet 2B
+  ElasticIPAddress2BEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: VPC
+      InstanceId: !Ref BastionHost2B
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-eip-bastion-2b
+
+  #**************** Outputs ******************************

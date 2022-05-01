@@ -1,0 +1,16 @@
+[
+  {
+    "ParameterKey": "EnvironmentName",
+    "ParameterValue": "landscaping"
+  },
+
+  {
+    "ParameterKey": "S3CodeBucketName",
+    "ParameterValue": "devops.sobitel.com"
+  },
+
+  {
+    "ParameterKey": "S3CodeArchive",
+    "ParameterValue": "landscaping.zip"
+  }
+]
